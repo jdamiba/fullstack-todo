@@ -1,9 +1,8 @@
 "use server";
 
 import { sql } from "@vercel/postgres";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import TaskList from "./components/TaskList";
-import { useCallback } from "react";
 
 interface Task {
   id: number;
