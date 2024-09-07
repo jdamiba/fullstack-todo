@@ -1,84 +1,97 @@
-"use client";
+"use server";
 
-import { useState } from "react";
+import { sql } from "@vercel/postgres";
+import { auth, currentUser } from "@clerk/nextjs/server";
+import TaskList from "./components/TaskList";
+import { useCallback } from "react";
 
-export default function Home() {
-  const [tasks, setTasks] = useState<string[]>([]);
-  const [newTask, setNewTask] = useState("");
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+interface Task {
+  id: number;
+  content: string;
+  created_at: string; // Add this line
+}
 
-  const addTask = () => {
-    if (newTask.trim()) {
-      setTasks([...tasks, newTask.trim()]);
-      setNewTask("");
-    }
+async function getTasks(userId: string): Promise<Task[]> {
+  const { rows } = await sql<Task>`
+    SELECT id, content, created_at 
+    FROM tasks 
+    WHERE user_id = ${userId}
+    ORDER BY created_at DESC
+  `;
+  return rows;
+}
+
+async function addTask(userId: string, content: string): Promise<Task> {
+  const { rows } = await sql<Task>`
+    INSERT INTO tasks (content, user_id, created_at)
+    VALUES (${content}, ${userId}, NOW())
+    RETURNING id, content, created_at
+  `;
+  return rows[0];
+}
+
+async function updateTask(
+  userId: string,
+  id: number,
+  content: string
+): Promise<Task> {
+  const { rows } = await sql<Task>`
+    UPDATE tasks
+    SET content = ${content}
+    WHERE id = ${id} AND user_id = ${userId}
+    RETURNING id, content
+  `;
+  return rows[0];
+}
+
+async function deleteTask(userId: string, id: number) {
+  await sql`DELETE FROM tasks WHERE id = ${id} AND user_id = ${userId}`;
+}
+
+async function ensureUserExists(userId: string) {
+  const { rowCount } = await sql`
+    INSERT INTO users (id)
+    VALUES (${userId})
+    ON CONFLICT (id) DO NOTHING
+  `;
+  return (rowCount ?? 0) > 0;
+}
+
+export default async function Home() {
+  const { userId } = await auth();
+
+  if (!userId) {
+    return <div>Please sign in to view your tasks.</div>;
+  }
+
+  // Ensure the user exists in the database
+  await ensureUserExists(userId);
+
+  const tasks = await getTasks(userId);
+
+  const addTaskAction = async (content: string) => {
+    "use server";
+    return addTask(userId, content);
   };
 
-  const deleteTask = (index: number) => {
-    setTasks(tasks.filter((_, i) => i !== index));
+  const updateTaskAction = async (id: number, content: string) => {
+    "use server";
+    return updateTask(userId, id, content);
   };
 
-  const startEditing = (index: number) => {
-    setEditingIndex(index);
-    setNewTask(tasks[index]);
-  };
-
-  const saveEdit = () => {
-    if (editingIndex !== null) {
-      const updatedTasks = [...tasks];
-      updatedTasks[editingIndex] = newTask.trim();
-      setTasks(updatedTasks);
-      setEditingIndex(null);
-      setNewTask("");
-    }
+  const deleteTaskAction = async (id: number) => {
+    "use server";
+    return deleteTask(userId, id);
   };
 
   return (
-    <div className="flex flex-col items-center min-h-screen p-8 font-[family-name:var(--font-geist-sans)]">
-      <main className="w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-4">To-Do List</h1>
-
-        <div className="flex mb-4">
-          <input
-            type="text"
-            value={newTask}
-            onChange={(e) => setNewTask(e.target.value)}
-            className="flex-grow p-2 border rounded-l"
-            placeholder="Add a new task"
-          />
-          <button
-            onClick={editingIndex !== null ? saveEdit : addTask}
-            className="bg-blue-500 text-white p-2 rounded-r"
-          >
-            {editingIndex !== null ? "Save" : "Add"}
-          </button>
-        </div>
-
-        <ul className="space-y-2">
-          {tasks.map((task, index) => (
-            <li
-              key={index}
-              className="flex items-center justify-between bg-gray-100 p-2 rounded"
-            >
-              <span>{task}</span>
-              <div>
-                <button
-                  onClick={() => startEditing(index)}
-                  className="text-blue-500 mr-2"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => deleteTask(index)}
-                  className="text-red-500"
-                >
-                  Delete
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </main>
+    <div className="flex">
+      <TaskList
+        initialTasks={tasks}
+        addTask={addTaskAction}
+        updateTask={updateTaskAction}
+        deleteTask={deleteTaskAction}
+      />
     </div>
   );
 }
